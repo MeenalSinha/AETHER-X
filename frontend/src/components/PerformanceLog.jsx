@@ -1,6 +1,6 @@
 import React from 'react'
 import {
-  LineChart, Line, BarChart, Bar,
+  LineChart, Line, BarChart, Bar, ScatterChart, Scatter,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
 import './PerformanceLog.css'
@@ -12,6 +12,8 @@ export default function PerformanceLog({ performance }) {
     kdtree_ms: p.kdtree_build_ms,
     conjunctions: p.conjunctions,
     maneuvers: p.maneuvers_executed,
+    cumulative_dv_km_s: p.cumulative_dv_km_s || 0,
+    collisions_avoided: p.collisions_avoided || 0,
   }))
 
   const avgElapsed = performance.length
@@ -80,6 +82,22 @@ export default function PerformanceLog({ performance }) {
                   <Bar dataKey="conjunctions" fill="var(--warn)" radius={[2,2,0,0]} name="Conjunctions" />
                   <Bar dataKey="maneuvers"    fill="var(--accent-blue)" radius={[2,2,0,0]} name="Maneuvers" />
                 </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Scatter Plot: Δv Cost vs Collisions Avoided */}
+          <div className="panel perf-chart-panel">
+            <div className="panel-header">Efficiency: Cost (∆v) vs Outcomes (Collisions Avoided)</div>
+            <div className="perf-chart-body">
+              <ResponsiveContainer width="100%" height={200}>
+                <ScatterChart margin={{ top: 8, right: 16, left: -10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis type="number" dataKey="collisions_avoided" name="Collisions Avoided" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} label={{ value: 'Collisions Avoided', position: 'insideBottom', offset: -5, fontSize: 10 }} allowDecimals={false} />
+                  <YAxis type="number" dataKey="cumulative_dv_km_s" name="Total ∆v (km/s)" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                  <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }} />
+                  <Scatter name="Efficiency Frontier" data={chartData} fill="var(--accent-blue)" />
+                </ScatterChart>
               </ResponsiveContainer>
             </div>
           </div>

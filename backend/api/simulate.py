@@ -86,13 +86,16 @@ async def simulation_step(req: StepRequest, api_key: str = Depends(get_api_key))
             sat.nominal_r, sat.nominal_v = propagate(sat.nominal_r, sat.nominal_v, dt)
 
     # ── 3. Propagate debris ───────────────────────────────────────────────────
-    if req.propagate_debris:
+    if req.propagate_debris and sim.debris:
+        from engine.physics import rk4_batch
         debris_list = list(sim.debris.values())
-        for deb in debris_list:
-            state = np.concatenate([deb.r, deb.v])
-            for _ in range(n_sub):
-                state = rk4_step(state, actual_sub_dt)
-            deb.r, deb.v = state[:3], state[3:]
+        states = np.array([[*d.r, *d.v] for d in debris_list])
+        
+        for _ in range(n_sub):
+            states = rk4_batch(states, actual_sub_dt)
+            
+        for i, deb in enumerate(debris_list):
+            deb.r, deb.v = states[i, :3], states[i, 3:]
 
     t_prop_ms = (time.perf_counter() - t_prop_start) * 1000
 
@@ -103,7 +106,15 @@ async def simulation_step(req: StepRequest, api_key: str = Depends(get_api_key))
 
     # ── 5. Rebuild KD-Tree ────────────────────────────────────────────────────
     t_kdtree_start = time.perf_counter()
-    kdtree_ms = _debris_engine.rebuild(sim.debris)
+    kdtree_ms = 0.0
+    
+    # Rebuild staleness threshold (> 300 seconds)
+    accumulated_time = (sim.current_time.timestamp() - getattr(_debris_engine, "_last_build_time", 0.0))
+    if _kdtree_dirty or accumulated_time >= 300.0:
+        kdtree_ms = _debris_engine.rebuild(sim.debris)
+        _debris_engine._last_build_time = sim.current_time.timestamp()
+        _kdtree_dirty = False
+        
     t_kdtree_ms = (time.perf_counter() - t_kdtree_start) * 1000
 
     # ── 6. Conjunction assessment ─────────────────────────────────────────────
@@ -121,6 +132,8 @@ async def simulation_step(req: StepRequest, api_key: str = Depends(get_api_key))
     for sat_id, sat in sim.satellites.items():
         sat.risk = risk_map.get(sat_id, "NOMINAL")
         if sat.status not in ("EOL",) and sat.risk in ("CRITICAL", "WARNING"):
+            if sat.status != "EVADING":
+                logger.info(f"{sat_id}: Mission Uptime Penalty accrued — entered EVADING status")
             sat.status = "EVADING"
         elif sat.status == "EVADING" and sat.risk == "NOMINAL":
             sat.status = "RECOVERING"
@@ -155,6 +168,8 @@ async def simulation_step(req: StepRequest, api_key: str = Depends(get_api_key))
         "maneuvers_executed": executed_count,
         "satellites": len(sim.satellites),
         "debris": len(sim.debris),
+        "cumulative_dv_km_s": optimizer.global_fuel_stats()["total_dv_km_s"],
+        "collisions_avoided": sim.total_collisions_avoided,
     }
     sim.log_performance("simulation_step", t_total_ms, perf)
     logger.info(
@@ -163,15 +178,10 @@ async def simulation_step(req: StepRequest, api_key: str = Depends(get_api_key))
     )
 
     return {
-        "step": sim.step_count,
-        "sim_time": sim.current_time.isoformat(),
-        "step_seconds": dt,
-        "conjunctions": len(warnings),
-        "critical": sum(1 for w in warnings if w["risk_level"] == "CRITICAL"),
-        "maneuvers_scheduled": len(scheduled),
-        "maneuvers_executed": executed_count,
-        "performance": perf,
-        "fuel_stats": optimizer.global_fuel_stats(),
+        "status": "STEP_COMPLETE",
+        "new_timestamp": sim.current_time.isoformat(),
+        "collisions_detected": sum(1 for w in warnings if w["risk_level"] == "CRITICAL"),
+        "maneuvers_executed": executed_count
     }
 
 

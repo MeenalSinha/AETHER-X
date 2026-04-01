@@ -28,88 +28,86 @@ class DvVector(BaseModel):
     def to_np(self) -> np.ndarray:
         return np.array([self.x, self.y, self.z])
 
-
 class BurnRequest(BaseModel):
-    satellite_id: str
     burn_id: Optional[str] = None
-    dv_x_km_s: float = Field(description="Delta-V x component in km/s (ECI)")
-    dv_y_km_s: float = Field(description="Delta-V y component in km/s (ECI)")
-    dv_z_km_s: float = Field(description="Delta-V z component in km/s (ECI)")
-    offset_seconds: float = Field(default=15.0, ge=10,
-                                   description="Seconds from now to execute burn")
-
+    burnTime: str
+    deltaV_vector: DvVector
 
 class ManeuverPlan(BaseModel):
-    burns: List[BurnRequest]
+    satelliteId: str
+    maneuver_sequence: List[BurnRequest]
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+from dateutil.parser import isoparse
 
 @router.post("/maneuver/schedule")
 async def schedule_maneuver(plan: ManeuverPlan, api_key: str = Depends(get_api_key)):
     """
     Schedule one or more thruster burns. Burns are inserted into the
     satellite's maneuver queue and executed during simulation steps.
-    Enforces 10-second communication latency and thruster cooldown.
     """
     sim = SimulationState.get_instance()
-    scheduled = []
-    errors = []
+    sat_id = plan.satelliteId
+    sat = sim.satellites.get(sat_id)
 
-    for burn_req in plan.burns:
-        sat_id = burn_req.satellite_id
-        sat = sim.satellites.get(sat_id)
+    if sat is None:
+        raise HTTPException(status_code=404, detail="satellite not found")
 
-        if sat is None:
-            errors.append({"satellite_id": sat_id, "error": "satellite not found"})
-            continue
+    if sat.status == "EOL":
+        raise HTTPException(status_code=400, detail="satellite is EOL")
 
-        if sat.status == "EOL":
-            errors.append({"satellite_id": sat_id, "error": "satellite is EOL"})
-            continue
-
-        # Enforce cooldown
-        if sat.last_burn_time is not None:
-            from core.simulation_state import COOLDOWN
-            elapsed = (sim.current_time - sat.last_burn_time).total_seconds()
-            if elapsed < COOLDOWN:
-                errors.append({
-                    "satellite_id": sat_id,
-                    "error": f"thruster cooldown: {COOLDOWN - elapsed:.0f}s remaining"
-                })
-                continue
-
-        dv = np.array([burn_req.dv_x_km_s, burn_req.dv_y_km_s, burn_req.dv_z_km_s])
+    has_los = sat.has_ground_contact()
+    
+    # Validation logic
+    total_dv = 0.0
+    for burn_req in plan.maneuver_sequence:
+        dv = burn_req.deltaV_vector.to_np()
         dv_mag = float(np.linalg.norm(dv))
 
-        if dv_mag > 0.1:
-            errors.append({"satellite_id": sat_id, "error": "∆v too large (>100 m/s)"})
-            continue
+        # Spec: Maximum Thrust Limit: |Δv| ≤ 15.0 m/s per individual burn command
+        MAX_DV_KM_S = 0.015
+        if dv_mag > MAX_DV_KM_S:
+            raise HTTPException(status_code=400, detail="∆v exceeds 15 m/s per-burn limit")
+            
+        total_dv += dv_mag
 
-        burn_time = sim.current_time + timedelta(seconds=burn_req.offset_seconds)
-        burn_id = burn_req.burn_id or f"MAN_{sat_id}_{sim.step_count}"
+    from engine.physics import MU  # Need some way to roughly check fuel, or just basic check
+    
+    # Calculate approx fuel usage
+    from core.simulation_state import ISP
+    g0 = 9.80665 / 1000.0  # km/s^2
+    total_mass = sat.mass_dry + sat.mass_fuel
+    # delta_m = m0 * (1 - e^(-dv / (Isp * g0)))
+    mass_ratio = np.exp(total_dv / (ISP * g0))
+    proj_fuel = sat.mass_fuel - (total_mass - total_mass / mass_ratio)
 
-        burn = ManeuverBurn(
-            burn_id=burn_id,
-            burn_time=burn_time,
-            dv_vector=dv,
-        )
-        sat.maneuver_queue.append(burn)
-        sat.maneuver_queue.sort(key=lambda b: b.burn_time)
+    has_fuel = proj_fuel >= 0
 
-        scheduled.append({
-            "satellite_id": sat_id,
-            "burn_id": burn_id,
-            "burn_time": burn_time.isoformat(),
-            "dv_km_s": round(dv_mag, 6),
-            "dv_m_s": round(dv_mag * 1000, 3),
-        })
-        logger.info(f"Manual burn scheduled: {burn_id} on {sat_id} @ {burn_time.isoformat()}")
+    if has_fuel and has_los:
+        for burn_req in plan.maneuver_sequence:
+            dv = burn_req.deltaV_vector.to_np()
+            burn_time = isoparse(burn_req.burnTime)
+            burn_id = burn_req.burn_id or f"MAN_{sat_id}_{sim.step_count}"
+
+            burn = ManeuverBurn(
+                burn_id=burn_id,
+                burn_time=burn_time,
+                dv_vector=dv,
+            )
+            sat.maneuver_queue.append(burn)
+            sat.maneuver_queue.sort(key=lambda b: b.burn_time)
+
+            logger.info(f"Manual burn scheduled: {burn_id} on {sat_id} @ {burn_time.isoformat()}")
 
     return {
-        "scheduled": scheduled,
-        "errors": errors,
-        "total_scheduled": len(scheduled),
+        "status": "SCHEDULED" if (has_fuel and has_los) else "REJECTED",
+        "validation": {
+            "ground_station_los": has_los,
+            "sufficient_fuel": has_fuel,
+            "projected_mass_remaining_kg": round(sat.mass_dry + max(0, proj_fuel), 2)
+        }
     }
 
 

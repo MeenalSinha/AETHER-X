@@ -22,43 +22,11 @@ from engine.physics import (
 
 logger = logging.getLogger("aether-x.optimizer")
 
-# ── Shadow AI Agent (The "Active ML" Shadow Policy) ─────────────────────────
-class ShadowAIAgent:
-    """
-    Experimental Shadow Policy: Probability-based decision engine.
-    Calculates the 'Probability of Collision' (Pc) using covariance overlap
-    and suggests an AI-driven evasion delta-v.
-    """
-    def __init__(self):
-        self.model_name = "AETHER-X Shadow-PPO (Probabilistic)"
-
-    def suggest_evasion(self, diff_r, total_cov):
-        # AI Logic: Gradient descent on the Mahalanobis collision field
-        dist = np.linalg.norm(diff_r) + 1e-9
-        direction = -diff_r / dist
-        target_v = 0.0055 # AI suggests 5.5 m/s for efficiency
-        
-        # Performance Evaluation: Compare against heuristic (typically ~6.4 m/s)
-        fuel_saving_perc = 14.1 # Evaluated benchmark vs Deterministic-v1
-        return direction * target_v, f"{self.model_name} (Fuel saving: {fuel_saving_perc}%)"
-
 LATENCY_S = 10  # seconds
-
 
 class AvoidanceOptimizer:
     """
     Multi-objective optimizer (deterministic baseline, RL-extensible).
-
-    Current approach: heuristic decision engine — deterministic and
-    safety-guaranteed. This is intentional: heuristics provide hard
-    real-time guarantees and interpretable audit trails that a learned
-    policy cannot yet match in safety-critical orbital contexts.
-
-    RL extension path: This class is architected as a drop-in replacement
-    target for a PPO/SAC agent (Stable-Baselines3). The `process_conjunctions`
-    interface accepts warnings → returns scheduled actions, which maps directly
-    to an RL step(obs) → action paradigm. A learned policy can replace or
-    augment `_compute_action_weights` without touching physics or scheduling.
 
     Objectives:
     - Maximize safety (avoid collisions) — Primary
@@ -69,6 +37,7 @@ class AvoidanceOptimizer:
     def __init__(self, sim: SimulationState):
         self.sim = sim
         self._evasion_pairs = set()  # (sat_id, debris_id) scheduled
+        self.gpu_accelerated = False
 
     def process_conjunctions(self, warnings: List[dict]) -> List[dict]:
         """
@@ -81,14 +50,14 @@ class AvoidanceOptimizer:
             return []
 
         # 1. Global Ranking (Simulation of MILP prioritization)
-        # We sort by: Risk Level (Critical first), then TCA (earliest first), then Fuel (lowest fuel first)
+        # Coordinate to prefer the satellite with HIGHEST remaining fuel to maneuver
         def sort_key(w):
             risk_map = {"CRITICAL": 0, "WARNING": 1, "ADVISORY": 2}
             risk_val = risk_map.get(w["risk_level"], 9)
-            tca = w["tca_seconds"]
             sat = self.sim.satellites.get(w["satellite_id"])
-            fuel = sat.fuel_fraction if sat else 1.0
-            return (risk_val, tca, fuel)
+            fuel = -sat.fuel_fraction if sat else 1.0
+            tca = w["tca_seconds"]
+            return (risk_val, fuel, tca)
 
         sorted_warnings = sorted(warnings, key=sort_key)
         
@@ -100,8 +69,7 @@ class AvoidanceOptimizer:
             sat_id = w["satellite_id"]
             deb_id = w["debris_id"]
             
-            # Coordination: If this satellite is already moving or this debris is handled by another sat's maneuver
-            # we might skip or re-evaluate. 
+            # Coordination: If this satellite is already moving or this debris is handled by another sat
             if sat_id in seen_sats:
                 continue
             
@@ -122,8 +90,6 @@ class AvoidanceOptimizer:
                 continue
 
             # Coordination: Multi-sat conflict resolution
-            # If this debris is also threatening another sat, we pick the most efficient one to move
-            # (Simple heuristic for demo: first one in sorted list moves)
             if deb_id in debris_handled and w["risk_level"] != "CRITICAL":
                 logger.info(f"Coordination: Debris {deb_id} already being cleared by another sat maneuver.")
                 continue
@@ -132,10 +98,10 @@ class AvoidanceOptimizer:
             if sat.last_burn_time is not None:
                 elapsed = (self.sim.current_time - sat.last_burn_time).total_seconds()
                 if elapsed < COOLDOWN:
-                    logger.warning(f"Coordination: {sat_id} thruster cooldown ({COOLDOWN - elapsed:.0f}s) - checking alternate responders")
+                    logger.warning(f"Coordination: {sat_id} thruster cooldown ({COOLDOWN - elapsed:.0f}s)")
                     continue
 
-            # Determine burn window (accounting for blackouts)
+            # Greedy minimum-∆v selection: earliest burn_time has longest time to TCA -> smallest ∆v
             burn_time = self._find_burn_window(sat, w["tca_seconds"])
             if burn_time is None:
                 continue
@@ -150,29 +116,42 @@ class AvoidanceOptimizer:
                 w["tca_seconds"], w["min_distance_km"]
             )
 
-            # Shadow AI Recommendation (Active ML)
-            ai_dv, ai_policy = self.shadow_ai.suggest_evasion(
-                deb.r - sat.r, sat.covariance + deb.covariance
-            )
-            ai_dv_mag = np.linalg.norm(ai_dv) * 1000
-
             evasion_burn = ManeuverBurn(
                 burn_id=f"EVA_{sat_id}_{deb_id}_{int(self.sim.current_time.timestamp())}",
                 burn_time=burn_time,
                 dv_vector=dv_eci,
             )
 
-            # Recovery burn: 90 min after evasion
-            recovery_time = burn_time + timedelta(seconds=5400)
+            # Recovery burn: Adaptive recovery timing logic
+            # Search a +/- 30 min window around the 90-min mark for minimum recovery ∆v
+            base_delay_s = 5400.0  # 90 mins
+            best_rec_dv = float('inf')
+            best_rec_time = None
+            best_dv_rec = None
+            
+            delay_since_current = (burn_time - self.sim.current_time).total_seconds()
+
             if sat.nominal_r is not None and sat.nominal_v is not None:
-                dv_rec = compute_recovery_dv(sat.r, sat.v, sat.nominal_r, sat.nominal_v)
-            else:
-                dv_rec = -dv_eci * 0.95
+                for offset in [-1800.0, 0.0, 1800.0]:
+                    delay_s = base_delay_s + offset
+                    total_delay_s = delay_since_current + delay_s
+                    # Compute recovery dv at this future epoch
+                    test_dv_rec = compute_recovery_dv(sat.r, sat.v, sat.nominal_r, sat.nominal_v, total_delay_s)
+                    test_dv_mag = np.linalg.norm(test_dv_rec)
+                    
+                    if test_dv_mag < best_rec_dv:
+                        best_rec_dv = test_dv_mag
+                        best_rec_time = burn_time + timedelta(seconds=delay_s)
+                        best_dv_rec = test_dv_rec
+            
+            if best_dv_rec is None:
+                best_rec_time = burn_time + timedelta(seconds=base_delay_s)
+                best_dv_rec = -dv_eci * 0.95
 
             recovery_burn = ManeuverBurn(
                 burn_id=f"REC_{sat_id}_{deb_id}_{int(self.sim.current_time.timestamp())}",
-                burn_time=recovery_time,
-                dv_vector=dv_rec,
+                burn_time=best_rec_time,
+                dv_vector=best_dv_rec,
             )
 
             sat.maneuver_queue.append(evasion_burn)
@@ -188,12 +167,10 @@ class AvoidanceOptimizer:
                 "satellite_id": sat_id,
                 "debris_id": deb_id,
                 "evasion_burn": burn_time.isoformat(),
-                "recovery_burn": recovery_time.isoformat(),
+                "recovery_burn": best_rec_time.isoformat(),
                 "dv_ms": round(dv_mag_ms, 4),
                 "risk": w["risk_level"],
                 "coordination": "GLOBAL_OPTIMIZED",
-                "shadow_ai_agent": ai_policy,
-                "shadow_ai_suggest_dv": round(ai_dv_mag, 2),
                 "gpu_accelerated": self.gpu_accelerated
             })
 

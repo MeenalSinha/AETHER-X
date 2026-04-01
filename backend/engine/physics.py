@@ -79,6 +79,34 @@ def predict_trajectory(r: np.ndarray, v: np.ndarray,
 
 # ── Spatial Indexing (KD-Tree) ────────────────────────────────────────────────
 
+def derivatives_batch(states: np.ndarray) -> np.ndarray:
+    """Vectorized state derivatives for [x, y, z, vx, vy, vz]. states is (N, 6)."""
+    r = states[:, :3]
+    v = states[:, 3:]
+    # Avoid division by zero
+    r_mag = np.linalg.norm(r, axis=1, keepdims=True) + 1e-9
+    a_grav = -(MU / r_mag**3) * r
+    
+    # Vectorized J2
+    z = r[:, 2:3]
+    z2_r2 = (z / r_mag)**2
+    factor = 1.5 * J2 * MU * RE**2 / r_mag**5
+    a_j2 = factor * np.column_stack([
+        r[:, 0] * (5 * z2_r2[:, 0] - 1),
+        r[:, 1] * (5 * z2_r2[:, 0] - 1),
+        r[:, 2] * (5 * z2_r2[:, 0] - 3),
+    ])
+    return np.column_stack([v, a_grav + a_j2])
+
+
+def rk4_batch(states: np.ndarray, dt: float) -> np.ndarray:
+    """Vectorized RK4 for N objects simultaneously. states is (N, 6)."""
+    k1 = derivatives_batch(states)
+    k2 = derivatives_batch(states + 0.5 * dt * k1)
+    k3 = derivatives_batch(states + 0.5 * dt * k2)
+    k4 = derivatives_batch(states + dt * k3)
+    return states + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+
 class DebrisNetEngine:
     """Fast collision pre-filter using KD-Tree spatial indexing."""
 
@@ -123,11 +151,11 @@ class DebrisNetEngine:
 def compute_tca(r_sat: np.ndarray, v_sat: np.ndarray,
                 r_deb: np.ndarray, v_deb: np.ndarray,
                 horizon_s: float = 86400.0,
-                step_s: float = 30.0) -> Tuple[float, float]:
+                step_s: float = 60.0) -> Tuple[float, float]:
     """
     Compute Time of Closest Approach (TCA) and minimum distance.
     Returns (tca_seconds, min_distance_km).
-    Uses bisection refinement around the minimum.
+    Evaluates across the entire horizon to capture multi-pass conjunctions.
     """
     best_dist = float("inf")
     best_t = 0.0
@@ -135,27 +163,16 @@ def compute_tca(r_sat: np.ndarray, v_sat: np.ndarray,
     s_sat = np.concatenate([r_sat, v_sat])
     s_deb = np.concatenate([r_deb, v_deb])
 
-    prev_dist = np.linalg.norm(r_sat - r_deb)
-    prev_sat = s_sat.copy()
-    prev_deb = s_deb.copy()
-
     t = 0.0
-    while t < horizon_s:
+    while t <= horizon_s:
+        dist = np.linalg.norm(s_sat[:3] - s_deb[:3])
+        if dist < best_dist:
+            best_dist = float(dist)
+            best_t = t
+
         s_sat = rk4_step(s_sat, step_s)
         s_deb = rk4_step(s_deb, step_s)
         t += step_s
-
-        dist = np.linalg.norm(s_sat[:3] - s_deb[:3])
-        if dist < best_dist:
-            best_dist = dist
-            best_t = t
-
-        # Early exit if moving away after minimum
-        if dist > prev_dist and t > 300:
-            if best_dist > COLLISION_THRESHOLD * 10:
-                break
-
-        prev_dist = dist
 
     return best_t, best_dist
 
@@ -164,18 +181,6 @@ def assess_conjunctions(sim: SimulationState, debris_engine: DebrisNetEngine,
                          horizon_s: float = 86400.0) -> List[dict]:
     """
     Full conjunction assessment pipeline with Kinetic Bounding Volume pre-filter.
-
-    Pipeline:
-      1. KD-Tree spatial query (O(log N)) — current-epoch proximity
-      2. KBV pre-filter — rejects safely-diverging, flags fast-converging
-      3. RK4 TCA computation — only for KBV-flagged candidates
-
-    The KBV layer catches objects that are currently 150–200 km away but
-    closing at >7 km/s (typical LEO crossing geometry) — these would pass
-    TCA within seconds of the current epoch and be missed by a pure snapshot
-    KD-Tree query without KBV velocity inflation.
-
-    Returns list of CDM-like warnings sorted by miss distance.
     """
     t0 = time.perf_counter()
     warnings = []
@@ -198,10 +203,10 @@ def assess_conjunctions(sim: SimulationState, debris_engine: DebrisNetEngine,
                 continue
             deb = sim.debris[deb_id]
             tca_s, min_dist = compute_tca(
-                sat.r, sat.v, deb.r, deb.v, horizon_s=min(horizon_s, 7200)
+                sat.r, sat.v, deb.r, deb.v, horizon_s=horizon_s, step_s=60.0
             )
 
-            if min_dist < 5.0:  # Only flag within 5 km
+            if min_dist < 10.0:  # Widened threshold from 5.0 to 10.0 per spec
                 risk = "CRITICAL" if min_dist < COLLISION_THRESHOLD else (
                     "WARNING" if min_dist < 1.0 else "ADVISORY"
                 )
@@ -253,55 +258,93 @@ def compute_evasion_dv(r_sat: np.ndarray, v_sat: np.ndarray,
                         r_deb: np.ndarray, v_deb: np.ndarray,
                         tca_s: float, min_dist: float) -> np.ndarray:
     """
-    Compute optimal evasion delta-v in ECI.
-    Strategy: prograde/retrograde burn (transverse) to shift TCA timing.
-    Fuel-optimal: use minimum dv to achieve 200m standoff.
+    Compute optimal evasion delta-v in ECI using B-plane linearized miss distance.
+    ΔB ≈ (∂B/∂v) · Δv ensures standoff is actually achieved.
     """
-    # Relative velocity at current epoch
-    dv_rel = v_sat - v_deb
-    rel_speed = np.linalg.norm(dv_rel)
+    # Propagate to TCA
+    r_sat_tca, v_sat_tca = propagate(r_sat, v_sat, tca_s)
+    r_deb_tca, v_deb_tca = propagate(r_deb, v_deb, tca_s)
+    
+    r_rel_tca = r_sat_tca - r_deb_tca
+    v_rel_tca = v_sat_tca - v_deb_tca
+    v_rel_mag = np.linalg.norm(v_rel_tca)
+    
+    # Target standoff
+    target_standoff = 5.0 # targeting 5km standoff
+    current_miss = np.linalg.norm(r_rel_tca)
+    deficit = max(0.0, target_standoff - current_miss)
+    
+    if deficit == 0.0:
+        return np.zeros(3)
 
-    # Target standoff: 0.5 km
-    target_standoff = 0.5
-    deficit = max(0, target_standoff - min_dist)
-
-    # Prograde burn (transverse direction) — fuel efficient
+    # Unit vector along relative velocity
+    v_rel_hat = v_rel_tca / (v_rel_mag + 1e-9)
+    
+    # B-plane vector (miss vector at TCA)
+    b_vec = r_rel_tca - np.dot(r_rel_tca, v_rel_hat) * v_rel_hat
+    b_mag = np.linalg.norm(b_vec)
+    
+    if b_mag < 1e-6:
+        # Exact head-on, arbitrary transverse direction
+        v_sat_hat = v_sat_tca / np.linalg.norm(v_sat_tca)
+        b_hat = np.cross(v_rel_hat, np.cross(v_sat_hat, v_rel_hat))
+        b_hat = b_hat / np.linalg.norm(b_hat)
+    else:
+        b_hat = b_vec / b_mag
+        
+    # Desired change in B-plane vector
+    delta_b_mag = deficit
+    
+    # Sensitivity (∂B/∂v): how delta-v at t=0 affects B at t=tca
+    # Approximation: ΔB ≈ Δv_transverse * tca_s
+    
+    # We want to apply dv in the transverse (T) direction for fuel efficiency.
     v_mag = np.linalg.norm(v_sat)
-    T_hat = v_sat / v_mag  # prograde unit vector
-
-    # Scale: small prograde burn shifts position at TCA
-    # Simplified: dv proportional to deficit / tca
-    if tca_s > 10:
-        dv_mag = min(MAX_DV := 0.015, deficit / tca_s * 2.0)
+    T_hat = v_sat / v_mag
+    
+    # Projection of T_hat on the B-plane
+    T_hat_b = T_hat - np.dot(T_hat, v_rel_hat) * v_rel_hat
+    T_hat_b_mag = np.linalg.norm(T_hat_b)
+    
+    if T_hat_b_mag < 0.1 or tca_s < 1.0:
+        # If T directon doesn't align well with B-plane, or tca is too small, use b_hat
+        dv_dir = b_hat
+        dv_mag = (delta_b_mag / max(tca_s, 1.0))
     else:
-        dv_mag = 0.010  # emergency: max safe burn
-
-    dv_mag = max(0.001, dv_mag)  # minimum meaningful burn
-
-    # Direction: prograde if debris is below, retrograde if above
-    r_rel = r_deb - r_sat
-    if np.dot(r_rel, T_hat) > 0:
-        direction = -T_hat  # retrograde: slow down, debris passes ahead
-    else:
-        direction = T_hat   # prograde: speed up, get ahead
-
-    return direction * dv_mag
+        # Align dv with T_hat (prograde or retrograde)
+        T_hat_b_unit = T_hat_b / T_hat_b_mag
+        # Dot product with b_hat tells us if we should burn prograde or retrograde
+        sign = np.sign(np.dot(T_hat_b_unit, b_hat))
+        if sign == 0: sign = 1.0
+        dv_dir = sign * T_hat
+        dv_mag = delta_b_mag / (tca_s * T_hat_b_mag)
+        
+    # Cap Delta-V
+    MAX_DV = 0.015
+    dv_mag = max(0.001, min(dv_mag, MAX_DV))
+    
+    return dv_dir * dv_mag
 
 
 def compute_recovery_dv(r_sat: np.ndarray, v_sat: np.ndarray,
-                         r_nom: np.ndarray, v_nom: np.ndarray) -> np.ndarray:
+                         r_nom: np.ndarray, v_nom: np.ndarray,
+                         delay_s: float) -> np.ndarray:
     """
     Compute recovery burn to return to nominal slot.
-    Simplified phasing: apply velocity correction toward nominal.
+    Propagates both satellite and nominal slot forward by delay_s,
+    then computes the required phasing delta-v at that future epoch.
     """
-    dv_nom = v_nom - v_sat
+    r_future, v_future = propagate(r_sat, v_sat, delay_s)
+    r_nom_future, v_nom_future = propagate(r_nom, v_nom, delay_s)
+    
+    dv_nom = v_nom_future - v_future
     dv_mag = np.linalg.norm(dv_nom)
     if dv_mag < 1e-6:
         return np.zeros(3)
+    
     # Cap at max single burn
     dv_mag = min(dv_mag, 0.010)
     return (dv_nom / np.linalg.norm(dv_nom)) * dv_mag
-
 
 # Expose MAX_DV for import
 MAX_DV = 0.015

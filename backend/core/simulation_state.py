@@ -22,20 +22,22 @@ MU = 398600.4418       # km³/s² — Earth gravitational parameter
 RE = 6378.137          # km — Earth equatorial radius
 J2 = 1.08262668e-3     # J2 oblateness coefficient
 G0 = 9.80665e-3        # km/s² — standard gravity
-ISP = 220.0            # s — thruster specific impulse (hydrazine)
+ISP = 300.0            # s — thruster specific impulse (monoprop)
 COLLISION_THRESHOLD = 0.1   # km — hard collision distance
 COOLDOWN = 600              # s — thruster cooldown after burn
 FUEL_EOL_THRESHOLD = 0.05   # fraction — trigger graveyard orbit
 
-# ── Ground Station Locations (lat, lon, elevation mask deg) ───────────────────
-GROUND_STATIONS: List[Tuple[float, float, float]] = [
-    (40.7, -74.0,  5.0),   # New York
-    (51.5,  -0.1,  5.0),   # London
-    (35.7, 139.7,  5.0),   # Tokyo
-    (-33.9,  18.4, 5.0),   # Cape Town
-    (28.6,   77.2, 5.0),   # New Delhi
-    (55.8,   37.6, 5.0),   # Moscow
-    (-34.6, -58.4, 5.0),   # Buenos Aires
+MASS_DRY = 500.0   # kg (Spec)
+MASS_FUEL = 50.0   # kg (Spec)
+
+# ── Ground Station Locations (lat, lon, min_elevation_deg, id, name) ──────────
+GROUND_STATIONS = [
+    (13.0333,  77.5167,  5.0, "GS-001", "ISTRAC_Bengaluru"),
+    (78.2297,  15.4077,  5.0, "GS-002", "Svalbard_Sat_Station"),
+    (35.4266, -116.890, 10.0, "GS-003", "Goldstone_Tracking"),
+    (-53.150, -70.9167,  5.0, "GS-004", "Punta_Arenas"),
+    (28.5450,  77.1926, 15.0, "GS-005", "IIT_Delhi_Ground_Node"),
+    (-77.846, 166.6682,  5.0, "GS-006", "McMurdo_Station"),
 ]
 
 
@@ -65,7 +67,7 @@ def eci_to_geodetic(r: np.ndarray, epoch: datetime) -> Tuple[float, float, float
 def has_ground_contact(r: np.ndarray) -> bool:
     """Check if satellite has line-of-sight to any ground station."""
     r_mag = float(np.linalg.norm(r))
-    for lat_gs, lon_gs, elev_mask in GROUND_STATIONS:
+    for lat_gs, lon_gs, elev_mask, _, _ in GROUND_STATIONS:
         lat_r = math.radians(lat_gs)
         lon_r = math.radians(lon_gs)
         r_gs = np.array([
@@ -120,7 +122,7 @@ class SatelliteState:
 
     @property
     def fuel_fraction(self) -> float:
-        total_propellant = self.mass_dry * 0.15  # 15% dry mass as propellant capacity
+        total_propellant = MASS_FUEL  # Spec initial fuel amount
         return max(0.0, min(1.0, self.mass_fuel / total_propellant))
 
     def consume_fuel(self, dv_km_s: float) -> float:
@@ -149,8 +151,8 @@ class SatelliteState:
     def update_history(self, epoch: datetime):
         lat, lon, _ = eci_to_geodetic(self.r, epoch)
         self.history.append((lat, lon))
-        if len(self.history) > 30:
-            self.history = self.history[-30:]
+        if len(self.history) > 100:
+            self.history = self.history[-100:]
 
 
 @dataclass
