@@ -33,13 +33,13 @@ _rate_limit_db = {}  # {ip: [timestamp, count]}
 async def rate_limit_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "0.0.0.0"
     now = time.time()
-    # 100 requests per minute
+    # 500 requests per minute (increased for dashboard polling)
     if client_ip in _rate_limit_db:
         last_reset, count = _rate_limit_db[client_ip]
         if now - last_reset > 60:
             _rate_limit_db[client_ip] = [now, 1]
         else:
-            if count >= 100:
+            if count >= 500:
                 raise HTTPException(status_code=429, detail="Too many requests")
             _rate_limit_db[client_ip][1] += 1
     else:
@@ -75,7 +75,7 @@ app.middleware("http")(rate_limit_middleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
