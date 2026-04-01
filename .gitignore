@@ -35,7 +35,7 @@ logs/
 # Dependencies
 node_modules/
 
-# Simulation State
-infra/
-backend/infra/
+# Simulation State (Infrastructure scripts allowed, state.json excluded)
+infra/state.json
+backend/infra/state.json
 *.json.bak
