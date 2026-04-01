@@ -91,7 +91,11 @@ export default function App() {
           )}
 
           {activeView === 'demo' && (
-            <DemoPanel conjunctions={sim.conjunctions} />
+            <DemoPanel 
+              conjunctions={sim.conjunctions} 
+              onStep={sim.refresh} 
+              onStress={sim.refresh}
+            />
           )}
         </main>
       </div>

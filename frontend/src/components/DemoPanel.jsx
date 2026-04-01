@@ -143,6 +143,7 @@ export default function DemoPanel({ conjunctions, onStep }) {
     try {
       const result = await req('POST', `/simulate/stress?scenario=${scenarioId}`)
       setStressResult({ scenario: scenarioId, ...result })
+      if (onStress) onStress()
     } catch (e) {
       setStressError(`Scenario failed: ${e.message}`)
     } finally {
