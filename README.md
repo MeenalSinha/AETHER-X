@@ -1,5 +1,10 @@
 # AETHER-X: Autonomous Constellation Manager
 
+### 🔗 GitHub Repository
+https://github.com/MeenalSinha/AETHER-X
+
+---
+
 **National Space Hackathon 2026 — IIT Delhi**  
 A high-performance, spec-compliant Orbital Debris Avoidance & Constellation Management System engineered for mission-critical autonomous safety. 
 
