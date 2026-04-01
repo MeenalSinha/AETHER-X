@@ -1,0 +1,57 @@
+.conj-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conj-full {
+  height: 100%;
+  min-height: 0;
+}
+
+.conj-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conj-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.conj-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.conj-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel-alt);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.conj-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.conj-row {
+  cursor: pointer;
+  transition: background .1s;
+}
+.conj-row:hover { background: var(--bg-panel-alt); }
+.conj-selected { background: var(--accent-blue-lt); }
+.conj-crit { border-left: 3px solid var(--crit); }

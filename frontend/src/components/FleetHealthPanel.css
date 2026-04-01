@@ -1,0 +1,137 @@
+.fleet-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.fleet-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+}
+
+.sort-label { 
+  font-size: 10px; 
+  color: var(--text-muted); 
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.sort-btn {
+  font-size: 11px; 
+  padding: 6px 12px;
+  border: 1px solid var(--border); 
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03); 
+  color: var(--text-secondary);
+  font-weight: 600;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sort-btn:hover { 
+  background: rgba(255, 255, 255, 0.08); 
+  border-color: rgba(255, 255, 255, 0.2); 
+}
+.sort-active { 
+  background: var(--accent-blue); 
+  border-color: var(--accent-blue); 
+  color: #fff; 
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+}
+
+.fleet-body {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.sat-grid { 
+  display: flex; 
+  flex-direction: column; 
+  min-height: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+}
+
+.sat-list { 
+  flex: 1; 
+  overflow-y: auto; 
+  padding: 8px 0; 
+}
+
+.sat-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 200px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sat-row:hover { 
+  background: rgba(255, 255, 255, 0.03); 
+}
+
+.sat-selected { 
+  background: rgba(56, 189, 248, 0.1) !important; 
+  border-left: 3px solid var(--accent-blue);
+  padding-left: 17px;
+}
+
+.sat-id { 
+  font-size: 13px; 
+  font-weight: 700; 
+  color: #fff;
+  font-family: var(--font-mono);
+}
+
+.sat-fuel-wrap {
+  display: flex; align-items: center; gap: 10px;
+}
+.fuel-pct { 
+  font-size: 11px; 
+  font-weight: 600;
+  color: var(--text-secondary);
+  width: 45px;
+}
+
+.sat-meta {
+  display: flex; align-items: center; gap: 12px;
+  justify-content: flex-end;
+}
+
+.sat-meta .mono {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.fleet-charts {
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+.chart-panel { 
+  display: flex; 
+  flex-direction: column; 
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+}
+
+.chart-body { 
+  padding: 20px;
+  background: radial-gradient(circle at 100% 0%, rgba(45, 212, 191, 0.03) 0%, transparent 60%);
+}
+
+.sat-eol { opacity: 0.4; filter: grayscale(0.5); }
+.sat-eol .sat-id { text-decoration: line-through; color: var(--text-muted); }

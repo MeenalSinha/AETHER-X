@@ -1,0 +1,155 @@
+.timeline-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.timeline-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.timeline-legend {
+  display: flex;
+  gap: 16px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tl-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+.tl-legend-swatch {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+}
+
+/* Time axis */
+.tl-axis {
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--border);
+  margin-left: 90px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.tl-tick::before {
+  content: '';
+  width: 1px; height: 6px;
+  background: var(--border-strong);
+  display: block;
+}
+
+.tl-tick-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tl-now-line {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1.5px;
+  background: var(--crit);
+  z-index: 10;
+}
+
+.tl-now-label {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--crit);
+  background: var(--bg-panel);
+  padding: 0 3px;
+  letter-spacing: .5px;
+}
+
+/* Rows */
+.tl-rows {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tl-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  min-height: 32px;
+}
+
+.tl-sat-label {
+  width: 90px;
+  padding: 0 10px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+}
+
+.tl-track {
+  flex: 1;
+  height: 32px;
+  position: relative;
+  background: var(--bg-panel-alt);
+  overflow: hidden;
+}
+
+.tl-now-track {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1.5px;
+  background: rgba(220, 38, 38, 0.3);
+  z-index: 5;
+}
+
+.tl-burn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px; height: 18px;
+  border-radius: 2px;
+  cursor: pointer;
+  z-index: 3;
+  transition: filter .1s;
+}
+.tl-burn:hover { filter: brightness(1.2); }
+
+.tl-burn-pending {
+  background: transparent !important;
+  border: 2px solid;
+  opacity: .8;
+}
+
+.tl-cooldown {
+  position: absolute;
+  top: 0; bottom: 0;
+  background: var(--bg-page);
+  border-right: 1px dashed var(--border-strong);
+  opacity: .8;
+  z-index: 2;
+}
