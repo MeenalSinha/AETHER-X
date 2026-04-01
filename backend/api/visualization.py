@@ -106,7 +106,7 @@ async def get_snapshot():
 
     # Ground stations
     gs_out = []
-    for lat, lon, _ in GROUND_STATIONS:
+    for lat, lon, _, _, _ in GROUND_STATIONS:
         gs_out.append({"lat": lat, "lon": lon})
 
     return {
