@@ -245,3 +245,118 @@
 .stress-btn-icon { font-size: 24px; }
 .stress-btn-label { font-size: 15px; font-weight: 800; color: var(--text-primary); }
 .stress-btn-desc { font-size: 11px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+
+.stress-btn-loading {
+  border-color: var(--accent-blue);
+  background: #f0f7ff;
+  opacity: 0.8;
+}
+
+.stress-btn:disabled { cursor: not-allowed; }
+
+/* ── Active pipeline step animation ── */
+.pipe-step-active {
+  background: #fffbeb !important;
+  border-left: 3px solid #f59e0b;
+  animation: pulse-step 0.8s ease-in-out infinite;
+}
+.pipe-step-active .pipe-num {
+  background: #f59e0b !important;
+  color: white !important;
+  font-size: 16px !important;
+}
+
+@keyframes pulse-step {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+/* ── Run Step Button ── */
+.run-step-btn {
+  background: var(--accent-blue);
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 14px 28px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+  align-self: flex-start;
+  box-shadow: 0 4px 14px rgba(37,99,235,0.3);
+}
+
+.run-step-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(37,99,235,0.4);
+}
+
+.run-step-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* ── Step Result Box ── */
+.step-result-box {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 14px 20px;
+  font-size: 12px;
+  color: #166534;
+}
+
+.step-ok {
+  font-weight: 800;
+  font-size: 13px;
+  color: #15803d;
+}
+
+.step-error {
+  background: #fff1f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+/* ── Stress Result Box ── */
+.stress-result-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stress-result-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0369a1;
+}
+
+.stress-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  font-size: 12px;
+  color: #0c4a6e;
+}
+
+.stress-result-grid b { color: #0369a1; }
+
+/* ── Empty state ── */
+.kbv-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 12px 0;
+  font-style: italic;
+}
+
